@@ -1,0 +1,6 @@
+{
+  "name": "Sonora LucidaDL Server & Telegram Bot Console",
+  "description": "Production FastAPI, Async Telegram Bot Polling, SQLAlchemy PostgreSQL, and LucidaDL Task Management & Real-Time Analytics Console with JWT Auth and Docker Deployment.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
