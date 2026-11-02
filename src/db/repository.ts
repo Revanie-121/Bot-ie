@@ -2,30 +2,54 @@ import { desc, eq } from 'drizzle-orm';
 import { db } from './index.ts';
 import { users, downloadJobs, botEvents, errorLogs } from './schema.ts';
 
+async function withDbRetry<T>(operation: () => Promise<T>, retries = 2): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await operation();
+    } catch (err: any) {
+      lastError = err;
+      const msg = String(err?.message || err?.cause?.message || '');
+      const isTransient =
+        msg.includes('Connection terminated') ||
+        msg.includes('ECONNRESET') ||
+        msg.includes('Client has encountered a connection error') ||
+        msg.includes('terminating connection');
+      if (!isTransient || attempt === retries) {
+        throw err;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
+    }
+  }
+  throw lastError;
+}
+
 export async function getOrCreateUser(
   uid: string,
   email: string,
   telegramChatId?: string
 ) {
   try {
-    const result = await db
-      .insert(users)
-      .values({
-        uid,
-        email,
-        telegramChatId: telegramChatId || '99481024',
-        role: 'operator',
-        preferredFormat: 'flac',
-        outputDir: '/sdcard/Music',
-        concurrencyLimit: 2,
-      })
-      .onConflictDoUpdate({
-        target: users.uid,
-        set: {
+    const result = await withDbRetry(() =>
+      db
+        .insert(users)
+        .values({
+          uid,
           email,
-        },
-      })
-      .returning();
+          telegramChatId: telegramChatId || '99481024',
+          role: 'operator',
+          preferredFormat: 'flac',
+          outputDir: '/sdcard/Music',
+          concurrencyLimit: 2,
+        })
+        .onConflictDoUpdate({
+          target: users.uid,
+          set: {
+            email,
+          },
+        })
+        .returning()
+    );
 
     return result[0];
   } catch (error) {
@@ -39,11 +63,13 @@ export async function updateUserSettings(
   updates: { preferredFormat?: string; outputDir?: string; concurrencyLimit?: number; telegramChatId?: string }
 ) {
   try {
-    const result = await db
-      .update(users)
-      .set(updates)
-      .where(eq(users.uid, uid))
-      .returning();
+    const result = await withDbRetry(() =>
+      db
+        .update(users)
+        .set(updates)
+        .where(eq(users.uid, uid))
+        .returning()
+    );
     return result[0];
   } catch (error) {
     console.error('Database user settings update failed:', error);
@@ -53,7 +79,9 @@ export async function updateUserSettings(
 
 export async function listDownloadJobs() {
   try {
-    return await db.select().from(downloadJobs).orderBy(desc(downloadJobs.id));
+    return await withDbRetry(() =>
+      db.select().from(downloadJobs).orderBy(desc(downloadJobs.id))
+    );
   } catch (error) {
     console.error('Database query listDownloadJobs failed:', error);
     throw new Error('Failed to load download jobs from PostgreSQL.', { cause: error });
@@ -62,10 +90,12 @@ export async function listDownloadJobs() {
 
 export async function getDownloadJobByUid(jobUid: string) {
   try {
-    const rows = await db
-      .select()
-      .from(downloadJobs)
-      .where(eq(downloadJobs.jobUid, jobUid));
+    const rows = await withDbRetry(() =>
+      db
+        .select()
+        .from(downloadJobs)
+        .where(eq(downloadJobs.jobUid, jobUid))
+    );
     return rows[0] || null;
   } catch (error) {
     console.error('Database query getDownloadJobByUid failed:', error);
@@ -75,7 +105,9 @@ export async function getDownloadJobByUid(jobUid: string) {
 
 export async function createDownloadJobRecord(data: typeof downloadJobs.$inferInsert) {
   try {
-    const result = await db.insert(downloadJobs).values(data).returning();
+    const result = await withDbRetry(() =>
+      db.insert(downloadJobs).values(data).returning()
+    );
     return result[0];
   } catch (error) {
     console.error('Database insert createDownloadJobRecord failed:', error);
@@ -88,11 +120,13 @@ export async function updateDownloadJobRecord(
   updates: Partial<typeof downloadJobs.$inferInsert>
 ) {
   try {
-    const result = await db
-      .update(downloadJobs)
-      .set({ ...updates, updatedAt: new Date() })
-      .where(eq(downloadJobs.jobUid, jobUid))
-      .returning();
+    const result = await withDbRetry(() =>
+      db
+        .update(downloadJobs)
+        .set({ ...updates, updatedAt: new Date() })
+        .where(eq(downloadJobs.jobUid, jobUid))
+        .returning()
+    );
     return result[0] || null;
   } catch (error) {
     console.error('Database updateDownloadJobRecord failed:', error);
@@ -102,7 +136,9 @@ export async function updateDownloadJobRecord(
 
 export async function listBotEvents() {
   try {
-    return await db.select().from(botEvents).orderBy(desc(botEvents.id));
+    return await withDbRetry(() =>
+      db.select().from(botEvents).orderBy(desc(botEvents.id))
+    );
   } catch (error) {
     console.error('Database listBotEvents failed:', error);
     throw new Error('Failed to load Telegram bot polling events.', { cause: error });
@@ -111,7 +147,9 @@ export async function listBotEvents() {
 
 export async function createBotEventRecord(data: typeof botEvents.$inferInsert) {
   try {
-    const result = await db.insert(botEvents).values(data).returning();
+    const result = await withDbRetry(() =>
+      db.insert(botEvents).values(data).returning()
+    );
     return result[0];
   } catch (error) {
     console.error('Database createBotEventRecord failed:', error);
@@ -121,7 +159,9 @@ export async function createBotEventRecord(data: typeof botEvents.$inferInsert) 
 
 export async function listErrorLogs() {
   try {
-    return await db.select().from(errorLogs).orderBy(desc(errorLogs.id));
+    return await withDbRetry(() =>
+      db.select().from(errorLogs).orderBy(desc(errorLogs.id))
+    );
   } catch (error) {
     console.error('Database listErrorLogs failed:', error);
     throw new Error('Failed to load error logs from PostgreSQL.', { cause: error });
@@ -130,7 +170,9 @@ export async function listErrorLogs() {
 
 export async function createErrorLogRecord(data: typeof errorLogs.$inferInsert) {
   try {
-    const result = await db.insert(errorLogs).values(data).returning();
+    const result = await withDbRetry(() =>
+      db.insert(errorLogs).values(data).returning()
+    );
     return result[0];
   } catch (error) {
     console.error('Database createErrorLogRecord failed:', error);
@@ -140,11 +182,13 @@ export async function createErrorLogRecord(data: typeof errorLogs.$inferInsert) 
 
 export async function toggleErrorLogResolved(id: number, resolved: boolean) {
   try {
-    const result = await db
-      .update(errorLogs)
-      .set({ resolved })
-      .where(eq(errorLogs.id, id))
-      .returning();
+    const result = await withDbRetry(() =>
+      db
+        .update(errorLogs)
+        .set({ resolved })
+        .where(eq(errorLogs.id, id))
+        .returning()
+    );
     return result[0] || null;
   } catch (error) {
     console.error('Database toggleErrorLogResolved failed:', error);
